@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Karel IDE</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        /* Custom Scrollbar for editor */
+        textarea::-webkit-scrollbar { width: 8px; height: 8px; }
+        textarea::-webkit-scrollbar-track { background: #f1f1f1; }
+        textarea::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+        
+        .karel-icon {
+            transition: transform 0.3s ease, left 0.3s ease, bottom 0.3s ease;
+        }
+        
+        /* Grid Crosses */
+        .grid-cross {
+            color: #1d4ed8; /* Blue-700 */
+            font-size: 10px;
+            user-select: none;
+        }
+
+        /* Error Line Styling */
+        .line-error {
+            background-color: #fee2e2; /* Red-100 */
+            color: #dc2626; /* Red-600 */
+            font-weight: bold;
+            border-right: 2px solid #dc2626;
+        }
+        
+        /* Indent Guide Line - Darkened for visibility */
+        .indent-line {
+            border-left: 1px solid #d1d5db; /* Gray-300 */
+            height: 100%;
+            display: inline-block;
+            width: 3ch; /* Matches 3 spaces tab width */
+            vertical-align: top;
+        }
+    </style>
+</head>
+<body class="bg-white text-slate-800 h-screen flex flex-col font-sans overflow-hidden">
+
+    <!-- Top Navigation / Header -->
+    <div class="border-b border-gray-200 p-4">
+        <h1 class="text-3xl font-medium text-gray-800">Code</h1>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="flex-1 flex flex-row overflow-hidden">
+        
+        <!-- LEFT COLUMN: CODE EDITOR -->
+        <div class="w-1/2 flex flex-col p-4 border-r border-gray-200">
+            <!-- Editor Container -->
+            <div id="editorContainer" class="flex-1 border border-gray-300 rounded shadow-sm flex flex-col overflow-hidden transition-colors duration-200">
+                <!-- Editor Top Bar (Visual only) -->
+                <div class="bg-blue-50/50 border-b border-gray-100 p-2 text-xs text-gray-400 font-mono flex justify-between">
+                   <span>main.py</span>
+                   <span class="text-gray-400">Python-like Syntax</span>
+                </div>
+                
+                <!-- Editor Area with Gutter & Guides -->
+                <div class="flex-1 flex relative overflow-hidden bg-white">
+                    <!-- Line Numbers Gutter -->
+                    <div id="lineNumbers" class="bg-gray-50 border-r border-gray-200 text-gray-400 text-right py-4 pr-2 pl-1 font-mono text-sm leading-6 select-none w-10 overflow-hidden shrink-0 z-20">
+                        1
+                    </div>
+                    
+                    <!-- Code Area Wrapper -->
+                    <div class="relative flex-1 h-full overflow-hidden">
+                        <!-- Indent Guides Layer (Behind Text) -->
+                        <div id="guideLayer" class="absolute top-0 left-0 min-w-full min-h-full py-4 px-4 font-mono text-sm leading-6 select-none pointer-events-none whitespace-pre z-0">
+                            <!-- JS will inject lines here -->
+                        </div>
+
+                        <!-- Text Area (Front) -->
+                        <textarea id="codeEditor" 
+                            class="absolute top-0 left-0 w-full h-full py-4 px-4 outline-none resize-none font-mono text-sm leading-6 text-gray-800 whitespace-pre overflow-auto bg-transparent z-10" 
+                            spellcheck="false"
+                            oninput="handleInput()"
+                            onscroll="syncScroll()"
+                            onkeydown="handleKeys(event)">def main():
+   move()
+   turn_left()
+   move()</textarea>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="mt-4 flex gap-3">
+                <button onclick="runPythonCode()" id="runBtn" class="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded hover:bg-gray-50 text-gray-700 font-medium shadow-sm text-sm transition">
+                    <i class="fa-solid fa-play text-gray-600"></i> Run Program
+                </button>
+                <button onclick="toggleConsole()" class="px-4 py-2 bg-white border border-gray-300 rounded hover:bg-gray-50 text-gray-700 font-medium shadow-sm text-sm transition">
+                    Show Text Descriptions
+                </button>
+            </div>
+            
+            <!-- Hidden Console Overlay -->
+            <div id="consoleLog" class="hidden mt-2 h-32 bg-gray-50 border border-gray-200 rounded p-2 overflow-y-auto text-xs font-mono text-gray-600 shadow-inner">
+                <div class="text-gray-400 italic">Program execution log...</div>
+            </div>
+        </div>
+
+        <!-- RIGHT COLUMN: WORLD & REFERENCE -->
+        <div class="w-1/2 bg-white p-6 flex flex-col items-center overflow-y-auto h-full">
+            
+            <!-- World Controls -->
+            <div class="w-full max-w-[400px] flex justify-between items-end mb-2">
+                <div class="text-sm font-mono text-gray-600 bg-gray-100 px-2 py-1 rounded border border-gray-200">
+                    Beepers in Bag: <span id="bagCount" class="font-bold text-blue-600">0</span>
+                </div>
+                <button onclick="resetWorld()" class="flex items-center gap-1 px-3 py-1 bg-white border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50 shadow-sm">
+                    Reset World <i class="fa-solid fa-rotate-left text-xs"></i>
+                </button>
+            </div>
+
+            <!-- The Grid Container -->
+            <div class="relative mb-8 flex-shrink-0">
+                <!-- Y-Axis Labels -->
+                <div class="absolute -left-6 bottom-0 h-[400px] flex flex-col-reverse justify-around text-xs text-gray-500 font-mono">
+                    <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span>
+                </div>
+
+                <!-- Main Board -->
+                <div class="relative bg-white border-2 border-black" style="width: 400px; height: 400px;">
+                    <!-- Color Layer (Background paints) -->
+                    <div id="colorLayer" class="absolute inset-0"></div>
+                    <!-- Grid Points (Crosses) -->
+                    <div id="gridContainer" class="absolute inset-0 grid grid-cols-8 grid-rows-8 pointer-events-none z-10"></div>
+                    <!-- Game Objects Layer -->
+                    <div id="gameLayer" class="absolute inset-0 overflow-hidden z-20">
+                        <div id="karel" class="karel-icon absolute flex items-center justify-center z-30" 
+                             style="width: 50px; height: 50px; left: 0px; bottom: 0px;">
+                            <svg viewBox="0 0 100 100" width="40" height="40">
+                                <g fill="none" stroke="black" stroke-width="5" stroke-linecap="square" stroke-linejoin="miter">
+                                    <path d="M 22 55 L 8 55 L 8 70" fill="none" stroke="black" stroke-width="8" />
+                                    <path d="M 65 82 L 65 95 L 80 95" fill="none" stroke="black" stroke-width="8" />
+                                    <path d="M 20 5 L 65 5 L 85 25 L 85 85 L 40 85 L 20 65 Z" fill="white" />
+                                    <rect x="35" y="20" width="35" height="40" stroke-width="4" />
+                                    <line x1="45" y1="72" x2="65" y2="72" stroke-width="4" />
+                                </g>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- X-Axis Labels -->
+                <div class="absolute -bottom-6 left-0 w-[400px] flex justify-around text-xs text-gray-500 font-mono">
+                    <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span>
+                </div>
+            </div>
+
+            <!-- COLLAPSIBLE REFERENCE TABLE -->
+            <div class="w-full max-w-[500px] border border-gray-200 rounded-lg shadow-sm">
+                <button onclick="toggleReference()" class="w-full px-4 py-2 bg-slate-50 flex justify-between items-center font-medium text-slate-700 hover:bg-slate-100 transition rounded-t-lg">
+                    <span><i class="fa-solid fa-book-open mr-2 text-blue-600"></i> Karel Reference</span>
+                    <i id="refIcon" class="fa-solid fa-chevron-down text-sm transition-transform"></i>
+                </button>
+                
+                <div id="referenceTable" class="hidden bg-white border-t border-gray-200">
+                    <div class="p-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                        
+                        <!-- Base Commands -->
+                        <div class="bg-gray-50 p-3 rounded border border-gray-100">
+                            <h3 class="font-bold text-slate-800 mb-2 border-b pb-1">Base Commands</h3>
+                            <ul class="space-y-1 font-mono text-xs text-blue-700">
+                                <li>move()</li>
+                                <li>turn_left()</li>
+                                <li>put_beeper()</li>
+                                <li>pick_beeper()</li>
+                            </ul>
+                        </div>
+
+                        <!-- Extra Commands -->
+                        <div class="bg-gray-50 p-3 rounded border border-gray-100">
+                            <h3 class="font-bold text-slate-800 mb-2 border-b pb-1">Extra Commands</h3>
+                            <ul class="space-y-1 font-mono text-xs text-purple-700">
+                                <li>paint_corner(COLOR)</li>
+                                <li>corner_color_is(COLOR)</li>
+                            </ul>
+                        </div>
+
+                        <!-- Control Flow -->
+                        <div class="bg-gray-50 p-3 rounded border border-gray-100 col-span-1 md:col-span-2">
+                            <h3 class="font-bold text-slate-800 mb-2 border-b pb-1">Structures</h3>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="font-mono text-xs text-slate-600">
+                                    <div class="text-purple-600 font-bold">if condition:</div>
+                                    <div class="pl-2">code</div>
+                                </div>
+                                <div class="font-mono text-xs text-slate-600">
+                                    <div class="text-purple-600 font-bold">if condition:</div>
+                                    <div class="pl-2">code (yes)</div>
+                                    <div class="text-purple-600 font-bold">else:</div>
+                                    <div class="pl-2">code (no)</div>
+                                </div>
+                                <div class="font-mono text-xs text-slate-600">
+                                    <div class="text-purple-600 font-bold">while condition:</div>
+                                    <div class="pl-2">code</div>
+                                </div>
+                                <div class="font-mono text-xs text-slate-600">
+                                    <div class="text-purple-600 font-bold">for i in range(n):</div>
+                                    <div class="pl-2">code</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Conditions List -->
+                        <div class="bg-gray-50 p-3 rounded border border-gray-100 col-span-1 md:col-span-2">
+                            <h3 class="font-bold text-slate-800 mb-2 border-b pb-1">Conditions</h3>
+                            <div class="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[10px] text-slate-600">
+                                <div>front_is_clear()</div> <div>front_is_blocked()</div>
+                                <div>left_is_clear()</div> <div>left_is_blocked()</div>
+                                <div>right_is_clear()</div> <div>right_is_blocked()</div>
+                                <div>beepers_present()</div> <div>no_beepers_present()</div>
+                                <div>beepers_in_bag()</div> <div>no_beepers_in_bag()</div>
+                                <div>facing_north()</div> <div>not_facing_north()</div>
+                                <div>facing_south()</div> <div>not_facing_south()</div>
+                                <div>facing_east()</div> <div>not_facing_east()</div>
+                                <div>facing_west()</div> <div>not_facing_west()</div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // --- Reference Toggle ---
+        function toggleReference() {
+            const table = document.getElementById('referenceTable');
+            const icon = document.getElementById('refIcon');
+            if (table.classList.contains('hidden')) {
+                table.classList.remove('hidden');
+                icon.style.transform = 'rotate(180deg)';
+            } else {
+                table.classList.add('hidden');
+                icon.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        // --- Editor Logic (Gutter + Guides + AutoIndent) ---
+        function handleInput() {
+            updateLineNumbers();
+            updateGuides();
+        }
+
+        function updateLineNumbers() {
+            const editor = document.getElementById('codeEditor');
+            const gutter = document.getElementById('lineNumbers');
+            const lines = editor.value.split('\n').length;
+            
+            let html = '';
+            for(let i=1; i<=lines; i++) {
+                html += `<div id="line-${i}">${i}</div>`;
+            }
+            gutter.innerHTML = html;
+        }
+
+        function updateGuides() {
+            const editor = document.getElementById('codeEditor');
+            const guideLayer = document.getElementById('guideLayer');
+            const lines = editor.value.split('\n');
+            const tabSize = 3; 
+            
+            // 1. Calculate raw levels
+            const rawLevels = lines.map(line => {
+                if (line.length === 0) return -1; // Marker for empty
+                const match = line.match(/^\s*/);
+                const leadingSpaces = match ? match[0].length : 0;
+                return Math.floor(leadingSpaces / tabSize);
+            });
+
+            let html = '';
+            
+            // 2. Render with gap filling for empty lines
+            for(let i=0; i<lines.length; i++) {
+                let level = rawLevels[i];
+                
+                // Gap filling logic
+                if (level === -1) {
+                    let prevLevel = 0;
+                    for(let p = i-1; p >= 0; p--) {
+                        if (rawLevels[p] !== -1) {
+                            prevLevel = rawLevels[p];
+                            break;
+                        }
+                    }
+                    
+                    let nextLevel = 0;
+                    for(let n = i+1; n < lines.length; n++) {
+                        if (rawLevels[n] !== -1) {
+                            nextLevel = rawLevels[n];
+                            break;
+                        }
+                    }
+                    
+                    // Simple heuristic: connect if surrounding blocks are indented
+                    level = Math.max(0, Math.min(prevLevel, nextLevel));
+                }
+
+                let lineHtml = '';
+                for(let j=0; j<level; j++) {
+                    lineHtml += `<span class="indent-line"></span>`;
+                }
+                
+                html += `<div style="height: 1.5rem; width: 100%; white-space: pre;">${lineHtml}</div>`;
+            }
+            guideLayer.innerHTML = html;
+        }
+
+        function syncScroll() {
+            const editor = document.getElementById('codeEditor');
+            const gutter = document.getElementById('lineNumbers');
+            const guideLayer = document.getElementById('guideLayer');
+            
+            gutter.scrollTop = editor.scrollTop;
+            guideLayer.scrollTop = editor.scrollTop;
+            guideLayer.style.transform = `translateX(-${editor.scrollLeft}px)`;
+        }
+
+        function markErrorLine(lineNum) {
+            const el = document.getElementById(`line-${lineNum}`);
+            if (el) {
+                el.classList.add('line-error');
+            }
+        }
+
+        function clearErrorLines() {
+            const els = document.querySelectorAll('.line-error');
+            els.forEach(el => el.classList.remove('line-error'));
+        }
+
+        function handleKeys(e) {
+            const editor = e.target;
+            
+            // Handle Tab (Insert spaces)
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const start = editor.selectionStart;
+                const end = editor.selectionEnd;
+                editor.value = editor.value.substring(0, start) + "   " + editor.value.substring(end);
+                editor.selectionStart = editor.selectionEnd = start + 3;
+                handleInput();
+            }
+            
+            // Handle Enter (Auto-indent)
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const start = editor.selectionStart;
+                const end = editor.selectionEnd;
+                const value = editor.value;
+                
+                // Find start of current line
+                const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+                const currentLine = value.substring(lineStart, start);
+                
+                // Calculate indent of current line
+                const match = currentLine.match(/^\s*/);
+                let indent = match ? match[0] : '';
+                
+                // If line ends with ':', increase indent
+                if (currentLine.trim().endsWith(':')) {
+                    indent += "   ";
+                }
+                
+                // Insert newline + indent
+                editor.value = value.substring(0, start) + "\n" + indent + value.substring(end);
+                editor.selectionStart = editor.selectionEnd = start + 1 + indent.length;
+                handleInput();
+            }
+        }
+
+        // --- Engine Configuration ---
+        const GRID_ROWS = 8;
+        const GRID_COLS = 8;
+        const CELL_SIZE = 50; // 400px / 8
+        const ANIMATION_SPEED = 300; // ms
+
+        // --- State ---
+        let karel = {
+            x: 0, 
+            y: 0, 
+            dir: 0, // 0: East, 1: North, 2: West, 3: South
+            bag: 0,
+            rotation: 0 // New visual rotation tracker
+        };
+        
+        let beepers = {}; // "x,y" -> count
+        let walls = new Set(); // "x,y"
+        let cornerColors = {}; // "x,y" -> "color"
+
+        // --- Initialization ---
+        function initGrid() {
+            const container = document.getElementById('gridContainer');
+            container.innerHTML = '';
+            for (let i = 0; i < GRID_ROWS * GRID_COLS; i++) {
+                const cell = document.createElement('div');
+                cell.className = 'flex items-center justify-center';
+                cell.innerHTML = '<span class="text-blue-700 select-none text-xl font-light">+</span>';
+                container.appendChild(cell);
+            }
+        }
+
+        function initLevel() {
+            karel = { x: 0, y: 0, dir: 0, bag: 0, rotation: 0 };
+            beepers = { '2,0': 1, '4,0': 3 };
+            walls = new Set();
+            cornerColors = {};
+            
+            // Handle instant reset for visuals (prevent spin)
+            const karelEl = document.getElementById('karel');
+            if(karelEl) {
+                karelEl.style.transition = 'none';
+                updateKarelVisuals();
+                // Force reflow
+                void karelEl.offsetWidth;
+                karelEl.style.transition = ''; // Restore transition
+            }
+            
+            renderBeepers();
+            renderColors();
+            updateBagDisplay();
+            log("World Initialized.");
+        }
+
+        // --- ACTIONS (Async) ---
+        async function move() {
+            await sleep(ANIMATION_SPEED);
+            
+            if (front_is_blocked()) {
+                log("CRASH! Front is blocked.", "red");
+                throw new Error("Crash");
+            }
+
+            let dx = 0, dy = 0;
+            if (karel.dir === 0) dx = 1;
+            if (karel.dir === 1) dy = 1;
+            if (karel.dir === 2) dx = -1;
+            if (karel.dir === 3) dy = -1;
+
+            karel.x += dx;
+            karel.y += dy;
+            updateKarelVisuals();
+            log(`Moved to (${karel.x + 1}, ${karel.y + 1})`);
+        }
+
+        async function turn_left() {
+            await sleep(ANIMATION_SPEED);
+            karel.dir = (karel.dir + 1) % 4;
+            karel.rotation -= 90; // Use accumulated rotation
+            updateKarelVisuals();
+            log("Turned left");
+        }
+
+        async function put_beeper() {
+            await sleep(ANIMATION_SPEED);
+            if (karel.bag > 0) {
+                const key = `${karel.x},${karel.y}`;
+                beepers[key] = (beepers[key] || 0) + 1;
+                karel.bag--;
+                updateBagDisplay();
+                renderBeepers();
+                log("Put beeper");
+            } else {
+                log("No beepers in bag!", "red");
+                throw new Error("No Beepers In Bag");
+            }
+        }
+
+        async function pick_beeper() {
+            await sleep(ANIMATION_SPEED);
+            const key = `${karel.x},${karel.y}`;
+            if (beepers[key] && beepers[key] > 0) {
+                beepers[key]--;
+                if (beepers[key] === 0) delete beepers[key];
+                karel.bag++;
+                updateBagDisplay();
+                renderBeepers();
+                log("Picked beeper");
+            } else {
+                log("No beeper to pick!", "red");
+                throw new Error("No Beeper Present");
+            }
+        }
+
+        async function paint_corner(color) {
+            await sleep(ANIMATION_SPEED);
+            const key = `${karel.x},${karel.y}`;
+            cornerColors[key] = color;
+            renderColors();
+            log(`Painted corner ${color}`);
+        }
+
+        // --- CONDITIONS (Sync) ---
+        function front_is_clear() {
+            let dx = 0, dy = 0;
+            if (karel.dir === 0) dx = 1;
+            if (karel.dir === 1) dy = 1;
+            if (karel.dir === 2) dx = -1;
+            if (karel.dir === 3) dy = -1;
+            const nx = karel.x + dx;
+            const ny = karel.y + dy;
+            return is_safe(nx, ny);
+        }
+        function front_is_blocked() { return !front_is_clear(); }
+
+        function left_is_clear() {
+            let leftDir = (karel.dir + 1) % 4;
+            return check_dir_clear(leftDir);
+        }
+        function left_is_blocked() { return !left_is_clear(); }
+
+        function right_is_clear() {
+            let rightDir = (karel.dir + 3) % 4;
+            return check_dir_clear(rightDir);
+        }
+        function right_is_blocked() { return !right_is_clear(); }
+
+        function beepers_present() {
+            const key = `${karel.x},${karel.y}`;
+            return (beepers[key] && beepers[key] > 0);
+        }
+        function no_beepers_present() { return !beepers_present(); }
+
+        function beepers_in_bag() { return karel.bag > 0; }
+        function no_beepers_in_bag() { return karel.bag === 0; }
+
+        function facing_north() { return karel.dir === 1; }
+        function not_facing_north() { return !facing_north(); }
+        function facing_south() { return karel.dir === 3; }
+        function not_facing_south() { return !facing_south(); }
+        function facing_east() { return karel.dir === 0; }
+        function not_facing_east() { return !facing_east(); }
+        function facing_west() { return karel.dir === 2; }
+        function not_facing_west() { return !facing_west(); }
+
+        function corner_color_is(color) {
+            const key = `${karel.x},${karel.y}`;
+            return (cornerColors[key] || '').toLowerCase() === color.toLowerCase();
+        }
+
+        function check_dir_clear(dir) {
+            let dx = 0, dy = 0;
+            if (dir === 0) dx = 1;
+            if (dir === 1) dy = 1;
+            if (dir === 2) dx = -1;
+            if (dir === 3) dy = -1;
+            return is_safe(karel.x + dx, karel.y + dy);
+        }
+        function is_safe(x, y) {
+            if (x < 0 || x >= GRID_COLS || y < 0 || y >= GRID_ROWS) return false;
+            if (walls.has(`${x},${y}`)) return false;
+            return true;
+        }
+
+        // --- Visual Engine ---
+        function updateKarelVisuals() {
+            const karelEl = document.getElementById('karel');
+            karelEl.style.left = (karel.x * CELL_SIZE) + 'px';
+            karelEl.style.bottom = (karel.y * CELL_SIZE) + 'px';
+            
+            // Use accumulated rotation for smooth transition
+            karelEl.style.transform = `rotate(${karel.rotation}deg)`;
+        }
+
+        function renderBeepers() {
+            document.querySelectorAll('.beeper').forEach(e => e.remove());
+            Object.entries(beepers).forEach(([key, count]) => {
+                const [x, y] = key.split(',').map(Number);
+                const beeper = document.createElement('div');
+                beeper.className = 'beeper absolute bg-gray-300 border border-gray-500 transform rotate-45 flex items-center justify-center z-20';
+                beeper.style.width = (CELL_SIZE * 0.5) + 'px';
+                beeper.style.height = (CELL_SIZE * 0.5) + 'px';
+                beeper.style.left = (x * CELL_SIZE + (CELL_SIZE * 0.25)) + 'px';
+                beeper.style.bottom = (y * CELL_SIZE + (CELL_SIZE * 0.25)) + 'px';
+                
+                if (count > 1) {
+                    const label = document.createElement('span');
+                    label.className = '-rotate-45 text-xs font-bold';
+                    label.innerText = count;
+                    beeper.appendChild(label);
+                }
+                
+                document.getElementById('gameLayer').appendChild(beeper);
+            });
+        }
+
+        function renderColors() {
+            const layer = document.getElementById('colorLayer');
+            layer.innerHTML = '';
+            Object.entries(cornerColors).forEach(([key, color]) => {
+                const [x, y] = key.split(',').map(Number);
+                const tile = document.createElement('div');
+                tile.className = 'absolute w-full h-full opacity-30';
+                tile.style.backgroundColor = color;
+                tile.style.width = CELL_SIZE + 'px';
+                tile.style.height = CELL_SIZE + 'px';
+                tile.style.left = (x * CELL_SIZE) + 'px';
+                tile.style.bottom = (y * CELL_SIZE) + 'px';
+                layer.appendChild(tile);
+            });
+        }
+        
+        function updateBagDisplay() {
+            document.getElementById('bagCount').innerText = karel.bag;
+        }
+
+        // --- PRE-VALIDATION LOGIC ---
+        function validateSyntax(code) {
+            const lines = code.split('\n');
+            const validKeywords = ['pass', 'break', 'continue', 'return'];
+            const blockStarters = ['def', 'if', 'else', 'elif', 'while', 'for'];
+            
+            const jsReserved = [
+                'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else', 'export', 'extends', 'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'new', 'return', 'super', 'switch', 'this', 'throw', 'try', 'typeof', 'var', 'void', 'while', 'with', 'yield', 
+                'enum', 'implements', 'interface', 'let', 'package', 'private', 'protected', 'public', 'static', 'await', 'async'
+            ];
+            
+            let previousIndent = 0;
+            let previousLineWasBlockStarter = false;
+
+            for (let i = 0; i < lines.length; i++) {
+                let rawLine = lines[i];
+                let line = rawLine;
+
+                if (line.includes('#')) line = line.split('#')[0];
+                let trimmed = line.trim();
+
+                if (!trimmed || trimmed.startsWith('from') || trimmed.startsWith('import')) continue;
+                
+                const lineNum = i + 1;
+                const currentIndent = rawLine.match(/^(\s*)/)[1].length;
+
+                // --- 1. Indentation Check ---
+                if (currentIndent > previousIndent) {
+                    if (!previousLineWasBlockStarter) {
+                        return { line: lineNum, message: `IndentationError: Unexpected indent. You indented this line, but the previous line did not start a block (with ':').` };
+                    }
+                }
+                
+                // --- 2. Check Parentheses Balance ---
+                const openParens = (line.match(/\(/g) || []).length;
+                const closeParens = (line.match(/\)/g) || []).length;
+                if (openParens !== closeParens) {
+                     return { line: lineNum, message: `Syntax Error: Unbalanced parentheses. Found ${openParens} '(' and ${closeParens} ')'.` };
+                }
+
+                const firstWord = trimmed.split(/[ (:]/)[0]; 
+
+                // --- 3. Check for Reserved Words ---
+                if (jsReserved.includes(firstWord)) {
+                    const allowedPythonUse = ['if', 'else', 'while', 'for', 'return', 'break', 'continue'];
+                    if (!allowedPythonUse.includes(firstWord)) {
+                        return { line: lineNum, message: `Syntax Error: '${firstWord}' is a reserved word in this environment (JavaScript). Please use a different name.` };
+                    }
+                }
+
+                // --- 4. Check Block Starters ---
+                if (blockStarters.includes(firstWord)) {
+                    if (!trimmed.endsWith(':')) {
+                        return { line: lineNum, message: `Syntax Error: Missing ':' after '${firstWord}' statement.` };
+                    }
+                    
+                    // Empty Block Lookahead
+                    let foundContent = false;
+                    for(let j = i + 1; j < lines.length; j++) {
+                        let nextRaw = lines[j];
+                        if(!nextRaw.trim() || nextRaw.trim().startsWith('#')) continue;
+                        
+                        const nextIndent = nextRaw.match(/^(\s*)/)[1].length;
+                        if (nextIndent > currentIndent) {
+                            foundContent = true;
+                            break; 
+                        } else {
+                            return { line: lineNum, message: `Syntax Error: The '${firstWord}' block is empty. Add a command or 'pass'.` };
+                        }
+                    }
+                    if (!foundContent) {
+                         return { line: lineNum, message: `Syntax Error: The '${firstWord}' block ends abruptly. Add a command or 'pass'.` };
+                    }
+
+                    previousLineWasBlockStarter = true;
+                } else {
+                    previousLineWasBlockStarter = false;
+                }
+
+                // --- 5. Check for missing parentheses on commands ---
+                const isLoneIdentifier = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed);
+                if (isLoneIdentifier) {
+                    if (!validKeywords.includes(trimmed) && !blockStarters.includes(trimmed) && trimmed !== 'else') {
+                        return { line: lineNum, message: `Syntax Error: '${trimmed}' looks like a command but is missing '()'.` };
+                    }
+                }
+                
+                previousIndent = currentIndent;
+            }
+            return null; 
+        }
+
+        // --- EXECUTION ENGINE ---
+        async function runPythonCode() {
+            const btn = document.getElementById('runBtn');
+            const codeInput = document.getElementById('codeEditor');
+            const consoleDiv = document.getElementById('consoleLog');
+            const container = document.getElementById('editorContainer');
+            
+            // Reset
+            container.classList.remove('border-red-500', 'border-2');
+            clearErrorLines();
+            consoleDiv.classList.add('hidden');
+            resetWorld();
+            
+            btn.disabled = true;
+            btn.classList.add('opacity-50');
+
+            try {
+                const codeText = codeInput.value;
+
+                // --- STEP 1: PRE-CHECK SYNTAX ---
+                const syntaxError = validateSyntax(codeText);
+                if (syntaxError) {
+                    const err = new Error(syntaxError.message);
+                    err.lineNum = syntaxError.line;
+                    throw err;
+                }
+
+                // --- STEP 2: TRANSPILATION & EXECUTION ---
+                const lines = codeText.split('\n');
+                let jsCode = '';
+                const indentStack = [0];
+
+                for (let i = 0; i < lines.length; i++) {
+                    let line = lines[i];
+                    
+                    if (line.includes('#')) line = line.split('#')[0]; 
+
+                    if (!line.trim() || line.trim().startsWith('from ') || line.trim().startsWith('import ')) {
+                        jsCode += '\n'; 
+                        continue;
+                    }
+
+                    const indentMatch = line.match(/^(\s*)/);
+                    const currentIndent = indentMatch ? indentMatch[1].length : 0;
+                    
+                    while (currentIndent < indentStack[indentStack.length - 1]) {
+                        indentStack.pop();
+                        jsCode += '}\n';
+                    }
+
+                    if (currentIndent > indentStack[indentStack.length - 1]) {
+                        indentStack.push(currentIndent);
+                    }
+
+                    let content = line.trim();
+                    let lineNumStmt = `__lineNo = ${i+1}; `;
+                    
+                    if (content === 'pass') {
+                        content = '// pass';
+                    }
+                    else if (content.startsWith('def ')) {
+                        content = content.replace(/^def\s+/, 'async function ') + ' {'; 
+                        content = content.replace(':', ''); 
+                        content = lineNumStmt + content;
+                    }
+                    else if (content.startsWith('if ')) {
+                        content = content.replace('if ', 'if (').replace(':', ') {');
+                        content = lineNumStmt + content;
+                    }
+                    else if (content.startsWith('while ')) {
+                        content = content.replace('while ', 'while (').replace(':', ') {');
+                        content = lineNumStmt + content;
+                    }
+                    else if (content.startsWith('elif ')) {
+                        content = content.replace('elif ', '} else if (').replace(':', ') {');
+                    }
+                    else if (content.startsWith('else:')) {
+                        content = '} else {';
+                    }
+                    else if (content.startsWith('for ')) {
+                        const rangeMatch = content.match(/for\s+(\w+)\s+in\s+range\s*\((.+)\)\s*:/);
+                        if (rangeMatch) {
+                            content = `for (let ${rangeMatch[1]} = 0; ${rangeMatch[1]} < ${rangeMatch[2]}; ${rangeMatch[1]}++) {`;
+                        } else {
+                           content = '// Unsupported loop format (check syntax)'; 
+                        }
+                        content = lineNumStmt + content;
+                    }
+                    else if (content.startsWith('try') || content.startsWith('except')) {
+                        content = '// ' + content + ' (Exception handling not supported in this simplified mode)';
+                    }
+                    else {
+                        const actions = ['move', 'turn_left', 'put_beeper', 'pick_beeper', 'paint_corner'];
+                        actions.forEach(act => {
+                            if (content.startsWith(act)) {
+                                content = 'await ' + content;
+                            }
+                        });
+                        content += ';'; 
+                        content = lineNumStmt + content;
+                    }
+                    
+                    jsCode += content + '\n';
+                }
+                
+                while (indentStack.length > 1) { 
+                    indentStack.pop();
+                    jsCode += '}\n';
+                }
+
+                jsCode += "\nawait main();";
+
+                const userFunc = new Function(
+                    'move', 'turn_left', 'put_beeper', 'pick_beeper', 'paint_corner', 
+                    'front_is_clear', 'front_is_blocked', 'left_is_clear', 'left_is_blocked', 'right_is_clear', 'right_is_blocked',
+                    'beepers_present', 'no_beepers_present', 'beepers_in_bag', 'no_beepers_in_bag',
+                    'facing_north', 'not_facing_north', 'facing_south', 'not_facing_south', 'facing_east', 'not_facing_east', 'facing_west', 'not_facing_west',
+                    'corner_color_is',
+                    `return (async () => { 
+                        let __lineNo = 0;
+                        ${jsCode}
+                    })()`
+                );
+                
+                await userFunc(
+                    move, turn_left, put_beeper, pick_beeper, paint_corner,
+                    front_is_clear, front_is_blocked, left_is_clear, left_is_blocked, right_is_clear, right_is_blocked,
+                    beepers_present, no_beepers_present, beepers_in_bag, no_beepers_in_bag,
+                    facing_north, not_facing_north, facing_south, not_facing_south, facing_east, not_facing_east, facing_west, not_facing_west,
+                    corner_color_is
+                );
+                log("Program Finished.", "green");
+
+            } catch (e) {
+                // ERROR HANDLING
+                consoleDiv.classList.remove('hidden');
+                
+                if (e.message && e.message.includes("Unexpected end of input")) {
+                     log("Syntax Error: Your code structure is incomplete (missing indent or closing brace).", "red");
+                } 
+                else if (e.message && e.message.includes("Unexpected token")) {
+                     log("Syntax Error: Logic structure invalid (check indentation).", "red");
+                }
+                else {
+                     log("Error: " + e.message, "red");
+                }
+                console.error(e);
+                
+                container.classList.add('border-red-500', 'border-2');
+                
+                if (e.lineNum && e.lineNum > 0) {
+                    markErrorLine(e.lineNum);
+                    highlightLine(e.lineNum);
+                    log(`(Error occurred on Line ${e.lineNum})`, "red");
+                }
+                
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            }
+        }
+        
+        function highlightLine(lineNum) {
+            const editor = document.getElementById('codeEditor');
+            const lines = editor.value.split('\n');
+            
+            let start = 0;
+            for(let i=0; i<lineNum-1; i++) {
+                start += lines[i].length + 1; 
+            }
+            
+            let end = start + lines[lineNum-1].length;
+            
+            editor.focus();
+            editor.setSelectionRange(start, end);
+        }
+
+        // --- Utilities ---
+        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+        function log(msg, color) {
+            const c = document.getElementById('consoleLog');
+            c.innerHTML += `<div style="color:${color || 'black'}">> ${msg}</div>`;
+            c.scrollTop = c.scrollHeight;
+        }
+        function toggleConsole() {
+            document.getElementById('consoleLog').classList.toggle('hidden');
+        }
+        function resetWorld() {
+            initLevel();
+            document.getElementById('consoleLog').innerHTML = '';
+            document.getElementById('editorContainer').classList.remove('border-red-500', 'border-2');
+            clearErrorLines();
+        }
+
+        // Start
+        initGrid();
+        initLevel();
+        updateLineNumbers(); // Init gutter
+        updateGuides(); // Init guides
+
+    </script>
+</body>
+</html>
